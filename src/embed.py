@@ -4,7 +4,6 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 from ingest import load_all, DATA_DIR
 
-# 1. Настройки
 CHROMA_DB_PATH = "chroma_db"
 COLLECTION_NAME = "chekhov_texts"
 MODEL_NAME = "intfloat/multilingual-e5-small"
@@ -24,7 +23,7 @@ def build_database():
     print("3. Подключение к ChromaDB...")
     client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
     
-    # Удаляем старую коллекцию, чтобы не было дублей
+    # Удаляем старую коллекцию
     try:
         client.delete_collection(name=COLLECTION_NAME)
     except Exception:
@@ -39,7 +38,7 @@ def build_database():
         batch = chunks[i:i + batch_size]
         texts = [c.text for c in batch]
         
-        # passage - это для базы, query - это вопрос, это нужно для моделей е5
+        # passage - это для базы, query - это вопрос
         embeddings = model.encode([f"passage: {t}" for t in texts]).tolist()
         
         metadatas = [

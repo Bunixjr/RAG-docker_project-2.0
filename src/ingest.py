@@ -36,7 +36,7 @@ def make_chunks(paragraphs: list[str], max_chars: int = 1500) -> list[tuple[str,
                 current_chunk = []
                 current_length = 0
             
-            # Режем длинный абзац по предложениям (или просто по кускам)
+            # Режем длинный абзац по предложениям 
             for j in range(0, len(para), max_chars):
                 chunks.append((para[j:j+max_chars], i))
             continue
@@ -51,14 +51,14 @@ def make_chunks(paragraphs: list[str], max_chars: int = 1500) -> list[tuple[str,
             current_chunk = []
             current_length = 0
 
-    # Не забываем сохранить остаток
+    # Сохранить остаток
     if current_chunk:
         chunks.append(("\n\n".join(current_chunk), len(paragraphs) - len(current_chunk)))
 
     return chunks
 
-def filename_to_meta(filename: str) -> tuple[str, str]:
-    key = filename.rsplit(".", 1)[0]
+def filename_to_meta(filename: str) -> tuple[str, str]: 
+    key = filename.rsplit(".", 1)[0] # отрезаем .txt
     return MAPPING.get(key, (key, "А. П. Чехов"))
 
 def parse_file(path: str) -> list[Chunk]:

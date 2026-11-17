@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  # 1. Наш RAG-помощник (Клиент)
+  rag_app:
+    build: .
+    container_name: rag_client
+    depends_on:
+      - ollama  # Запускается только после того, как поднимется Ollama
+    environment:
+      - OLLAMA_HOST=http://ollama:11434 # Указываем адрес контейнера с Ollama
+    volumes:
+      - C:\Users\Bunixjr\.cache\huggingface:/root/.cache/huggingface
+      - ./chroma_db:/app/chroma_db  # Сохраняем базу данных на компьютере
+      - ./data:/app/data            # Сохраняем тексты на компьютере
+    stdin_open: true # Разрешаем ввод с клавиатуры (чтобы работал input())
+    tty: true        # Красивый вывод в терминале
+
+  # 2. Нейросеть Ollama (Сервер)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama_server
+    ports:
+      - "11434:11434" # Пробрасываем порт наружу (чтобы можно было тестировать)
+    volumes:
+      - ./ollama_data:/root/.ollama # Сохраняем скачанные модели на компьютере (Пункт 8 задания)
