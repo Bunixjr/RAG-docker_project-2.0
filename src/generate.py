@@ -52,6 +52,7 @@ def find_context(query: str):
     return "\n\n---\n\n".join(context_texts) #Склейка кусков
 
 def ask_llm(query: str):
+    query = " ".join(query.split()) # Очищаем запрос от невидимых символов и лишних пробелов
     print(f"\n🔎 Вопрос: '{query}'")
     
     print("  [1/4] Загрузка модели для поиска (e5) и базы ChromaDB...")
