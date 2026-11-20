@@ -2,9 +2,6 @@ import os
 # Отключаем проверку обновлений в интернете
 os.environ["HF_HUB_OFFLINE"] = "1" 
 
-# Указываем библиотеке ollama, где искать сервер (берет адрес из docker-compose)
-os.environ["OLLAMA_HOST"] = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-
 import ollama
 import chromadb
 from sentence_transformers import SentenceTransformer
@@ -22,53 +19,77 @@ def find_context(query: str):
     client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
     collection = client.get_collection(name=COLLECTION_NAME)
 
-    # 1. Векторный поиск (берем только 1 кусок), query - вопрос
+    # 1. Векторный поиск (без порога, всегда берем 1 кусок)
     query_embedding = model.encode([f"query: {query}"]).tolist()
-    results = collection.query(query_embeddings=query_embedding, n_results=1) # Только (1) один!
+    results = collection.query(query_embeddings=query_embedding, n_results=1)
     
     context_texts = []
+    best_source_text = "" 
+    best_work = ""
+
     for i in range(len(results['documents'][0])):
         text = results['documents'][0][i]
         meta = results['metadatas'][0][i]
         context_texts.append(f"Произведение: {meta['work']}\nТекст:\n{text}")
+        best_source_text = text
+        best_work = meta['work']
 
-    # 2. Точный поиск по JSON (если в вопросе есть имя собственное)
+    # 2. Точный поиск по JSON (Гибрид)
     names = re.findall(r'\b[А-ЯЁ][а-яё]+\b', query)
     target_name = names[1] if len(names) > 1 else None
     
-    if target_name: #JSON!
+    if target_name:
         try:
             with open(f"{CHROMA_DB_PATH}/chunks.json", "r", encoding="utf-8") as f:
                 all_chunks = json.load(f)
             for chunk in all_chunks:
                 if target_name in chunk['text']:
-                    # Ставим точный кусок в самое начало
                     exact_text = f"!!! ВАЖНЫЙ ФРАГМЕНТ !!!\nПроизведение: {chunk['work']}\nТекст:\n{chunk['text']}"
                     context_texts.insert(0, exact_text)
-                    break # Остановка
+                    
+                    # Умный поиск цитаты (вырезаем нужное предложение)
+                    sentences = re.split(r'(?<=[.!?])\s+', chunk['text'])
+                    for s in sentences:
+                        if target_name in s:
+                            clean_sentence = " ".join(s.split())
+                            best_source_text = clean_sentence
+                            best_work = chunk['work']
+                            break
+                    break
         except FileNotFoundError:
-            print("  ⚠️ Файл chunks.json не найден. Запусти embed.py!")
-            
-    return "\n\n---\n\n".join(context_texts) #Склейка кусков
+            print("  ⚠️ Файл chunks.json не найден.")
+
+    return "\n\n---\n\n".join(context_texts), best_source_text, best_work
 
 def ask_llm(query: str):
-    query = " ".join(query.split()) # Очищаем запрос от невидимых символов и лишних пробелов
-    print(f"\n🔎 Вопрос: '{query}'")
+    # 1. Очистка от спецсимволов (защита от Backspace)
+    query = re.sub(r'[^а-яА-Яa-zA-Z0-9\s]', '', query)
+    query = " ".join(query.split())
     
+    print(f"\n🔎 Вопрос: '{query}'")
+
+    # 2. Умный фильтр по стоп-словам
+    bad_topics = ["погода", "политика", "футбол", "спорт", "новости", "курс", "доллар", "евро", "программирование", "код", "питон", "математика", "уравнение"]
+    
+    if any(topic in query.lower() for topic in bad_topics):
+        print("\n💬 ОТВЕТ НЕЙРОСЕТИ:")
+        print("-" * 50)
+        print("Извините, я могу отвечать только по текстам А. П. Чехова. Я не владею информацией о погоде, политике или других темах, не связанных с литературой.")
+        print("-" * 50)
+        return 
+
     print("  [1/4] Загрузка модели для поиска (e5) и базы ChromaDB...")
-    context = find_context(query)
+    context, source_text, source_work = find_context(query) 
     print(f"  [2/4] Контекст найден! (Размер: {len(context)} символов).")
     
-    # Промпт с примером, чтобы модель не галлюцинировала
-    prompt = f"""Ты — литературный помощник. Твоя задача — отвечать на вопросы, строго цитируя текст.
-Не придумывай слова, которых нет в тексте. Копируй точные слова из отрывка. Если нет ответа - скажи "я не знаю"
+    # 3. Промпт для нейросети
+    prompt = f"""Ты — литературный помощник по текстам А. П. Чехова. 
+Твоя задача — отвечать на вопросы, используя ТОЛЬКО предоставленный текст.
 
-Пример правильного ответа:
-ВОПРОС: Какое звание у Ивана?
-ТЕКСТ: ...Иван Петрович, поручик.
-ОТВЕТ: Поручик.
-
-А теперь твой черед:
+ПРАВИЛА:
+1. Если вопрос касается литературы, персонажей или событий из текста — ответь кратко и точно.
+2. Если вопрос НЕ относится к литературе, но ты уже видишь этот текст — напиши ровно фразу: "В предоставленных отрывках нет ответа."
+3. Не выдумывай факты.
 
 ТЕКСТ:
 {context}
@@ -87,11 +108,25 @@ def ask_llm(query: str):
         )
         print("  [4/4] Ответ получен!\n")
         
+        answer_text = response['message']['content']
         print("💬 ОТВЕТ НЕЙРОСЕТИ:")
         print("-" * 50)
-        print(response['message']['content'])
+        print(answer_text)
         print("-" * 50)
         
+        # 4. Вывод цитаты (ТОЛЬКО если есть ответ)
+        # Проверяем, не сказала ли нейросеть, что ответа нет
+        answer_lower = answer_text.lower()
+        is_no_answer = any(phrase in answer_lower for phrase in [
+            "нет ответа", "не знаю", "не сказано", "нет информации", "не могу ответить", "извините"
+        ])
+        
+        if not is_no_answer and source_text:
+            print("\n📚 ИСТОЧНИК И ЦИТАТА-ДОКАЗАТЕЛЬСТВО:")
+            print(f"Произведение: {source_work}")
+            print(f"Цитата: «{source_text.strip()}»") 
+            print("-" * 50)
+
     except Exception as e:
         print(f"\n❌ ОШИБКА при работе с Ollama: {e}")
 
